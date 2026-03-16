@@ -10,23 +10,19 @@ import torch.optim as optim
 
 from env import ReversiEnv
 from mcts import MCTS
-# Import the architecture and buffer from your existing train file
 from train import DualHeadResNet, ReplayBuffer, RemoteEvaluator, get_symmetries, gpu_batch_evaluator, train_network
 
 import json
 
-# --- 1. Load The Seed Book ---
 try:
     with open("ffo_openings.json", "r", encoding='utf-8') as f:
         full_book = json.load(f)
-        # Extract just the lists of integers to feed into the environment
         OPENING_BOOK = [entry["sequence"] for entry in full_book]
     print(f"Loaded {len(OPENING_BOOK)} openings from JSON.")
 except FileNotFoundError:
-    print("[!] 'ffo_openings.json' not found. Please run build_opening_book.py first.")
+    print("[!] 'ffo_openings.json' not found. Run build_opening_book.py first.")
     exit()
 
-# --- 2. The Seeded Worker ---
 def seeded_self_play_worker(worker_id, input_queue, pipe_conn, experience_queue, num_games=10000):
     print(f"Worker {worker_id} started (Seeded Mode).")
     env = ReversiEnv()
@@ -37,24 +33,16 @@ def seeded_self_play_worker(worker_id, input_queue, pipe_conn, experience_queue,
         obs, info = env.reset()
         terminated = False
         game_history = []
-        
-        # --- NEW: Inject the Seed Opening ---
-        # Pick a random opening from our book
+
         opening_sequence = random.choice(OPENING_BOOK)
         
         for move in opening_sequence:
-            # Execute the move silently (without MCTS or recording history)
             obs, reward, terminated, truncated, info = env.step(move)
-            
-        # The environment is now perfectly set up at Turn 4. 
-        # Now, we hand control over to MCTS for the rest of the game.
-        # ------------------------------------
         
         while not terminated:
             best_action, mcts_policy = mcts.search(env, evaluator)
             
             if env.pass_count == 0 and len(game_history) < 15:
-                # Keep Dirichlet noise active for exploration
                 best_action = np.random.choice(65, p=mcts_policy)
                 
             current_player = 1 if env.is_black_turn else -1
@@ -63,8 +51,7 @@ def seeded_self_play_worker(worker_id, input_queue, pipe_conn, experience_queue,
                 game_history.append((sym_obs, sym_policy, current_player))
             
             obs, reward, terminated, truncated, info = env.step(best_action)
-            
-        # Game Over! Determine the absolute winner
+
         final_black_bb = env.current_player_bb if env.is_black_turn else env.opp_bb
         final_white_bb = env.opp_bb if env.is_black_turn else env.current_player_bb
         
@@ -80,7 +67,6 @@ def seeded_self_play_worker(worker_id, input_queue, pipe_conn, experience_queue,
         
     print(f"Worker {worker_id} finished all seeded games.")
 
-# --- 3. Main Execution ---
 if __name__ == "__main__":
     mp.set_start_method('spawn')
     
@@ -109,7 +95,7 @@ if __name__ == "__main__":
     
     for i in range(NUM_WORKERS):
         p = mp.Process(
-            target=seeded_self_play_worker, # Use the new seeded worker
+            target=seeded_self_play_worker,
             args=(i, input_queue, child_pipes[i], experience_queue)
         )
         p.start()
@@ -117,14 +103,11 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     master_model = DualHeadResNet().to(device)
-    
 
-    # --- CRITICAL: LOWER LEARNING RATE ---
-    # Dropped from 0.001 to 0.0001 to protect endgame weights
     optimizer = optim.Adam(master_model.parameters(), lr=0.0001, weight_decay=1e-4) 
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.9)
     
-    checkpoint_path = r"checkpoints/reversi_bundle_game_1000.pth"
+    checkpoint_path = r"model.pth"
     checkpoint_bundle = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     master_model.load_state_dict(checkpoint_bundle['model_state_dict'])
@@ -132,8 +115,7 @@ if __name__ == "__main__":
     scheduler.load_state_dict(checkpoint_bundle['scheduler_state_dict'])
     games_played = checkpoint_bundle['games_played']
     replay_buffer = ReplayBuffer(capacity=500000)
-    
-    # Try to load the matching buffer so it doesn't start empty
+
     buffer_path = checkpoint_path.replace("reversi_bundle_", "reversi_buffer_").replace(".pth", ".pkl").replace("checkpoints", "buffer_checkpoints")
     replay_buffer.load_buffer(buffer_path)
 
@@ -155,7 +137,6 @@ if __name__ == "__main__":
                     weight_sync_queue.put(cpu_state_dict)
                     
                     if games_played % 500 == 0:
-                        # Bundle everything into one dictionary
                         checkpoint_bundle = {
                             'games_played': games_played,
                             'model_state_dict': master_model.state_dict(),
@@ -174,7 +155,7 @@ if __name__ == "__main__":
         gpu_process.terminate()
         
     except KeyboardInterrupt:
-        print(f"\n[!] Ctrl+C detected! Halting seeded training at Game {games_played}...")
+        print(f"\n[!] Halting seeded training at Game {games_played}...")
         checkpoint_bundle = {
                             'games_played': games_played,
                             'model_state_dict': master_model.state_dict(),

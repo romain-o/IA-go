@@ -2,23 +2,20 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 
-# Bitboard Masks to prevent rays from wrapping around the board
 NOT_A_FILE = 0xFEFEFEFEFEFEFEFE
 NOT_H_FILE = 0x7F7F7F7F7F7F7F7F
 
 class ReversiEnv(gym.Env):
     """
-    High-performance Reversi Environment using Bitboards.
+    Reversi Environment using Bitboards.
     Actions: 0-63 correspond to board squares. 64 is the PASS action.
     """
     metadata = {"render_modes": ["ansi", "human"]}
 
     def __init__(self):
         super().__init__()
-        # 64 squares + 1 Pass action
         self.action_space = spaces.Discrete(65)
-        
-        # Observation: [Current Player Pieces, Opponent Pieces, Turn Indicator]
+    
         self.observation_space = spaces.Box(low=0, high=1, shape=(3, 8, 8), dtype=np.int8)
         
         self.reset()
@@ -27,9 +24,7 @@ class ReversiEnv(gym.Env):
         super().reset(seed=seed)
         
         # Initial Reversi Setup
-        # Black pieces at D5 (35) and E4 (28)
         self.black_bb = (1 << 28) | (1 << 35)
-        # White pieces at D4 (27) and E5 (36)
         self.white_bb = (1 << 27) | (1 << 36)
         
         self.is_black_turn = True
@@ -74,25 +69,24 @@ class ReversiEnv(gym.Env):
                 has_moves = True
                 
         if not has_moves:
-            mask[64] = 1 # Allow PASS only if no valid moves exist
+            mask[64] = 1
             
         return {"action_mask": mask}
 
     def _get_valid_moves(self, player_bb, opp_bb):
-        """Finds all legal moves using bitwise ray-casting."""
+        """Finds all legal moves."""
         empty = ~(player_bb | opp_bb) & 0xFFFFFFFFFFFFFFFF
         legal_moves = 0
 
-        # Directions: (Shift Amount, Wrap Mask)
         directions = [
-            (1, NOT_A_FILE),          # Right
-            (-1, NOT_H_FILE),         # Left
-            (8, 0xFFFFFFFFFFFFFFFF),  # Down
-            (-8, 0xFFFFFFFFFFFFFFFF), # Up
-            (9, NOT_A_FILE),          # Down-Right
-            (7, NOT_H_FILE),          # Down-Left
-            (-7, NOT_A_FILE),         # Up-Right
-            (-9, NOT_H_FILE)          # Up-Left
+            (1, NOT_A_FILE),         
+            (-1, NOT_H_FILE),         
+            (8, 0xFFFFFFFFFFFFFFFF), 
+            (-8, 0xFFFFFFFFFFFFFFFF), 
+            (9, NOT_A_FILE),          
+            (7, NOT_H_FILE),        
+            (-7, NOT_A_FILE),       
+            (-9, NOT_H_FILE)        
         ]
 
         for shift, mask in directions:
@@ -113,14 +107,18 @@ class ReversiEnv(gym.Env):
         return legal_moves
 
     def _apply_move(self, action, player_bb, opp_bb):
-        """Executes a move and returns the updated bitboards."""
         move_bb = 1 << action
         flipped = 0
 
         directions = [
-            (1, NOT_A_FILE), (-1, NOT_H_FILE), (8, 0xFFFFFFFFFFFFFFFF),
-            (-8, 0xFFFFFFFFFFFFFFFF), (9, NOT_A_FILE), (7, NOT_H_FILE),
-            (-7, NOT_A_FILE), (-9, NOT_H_FILE)
+            (1, NOT_A_FILE),         
+            (-1, NOT_H_FILE),         
+            (8, 0xFFFFFFFFFFFFFFFF), 
+            (-8, 0xFFFFFFFFFFFFFFFF), 
+            (9, NOT_A_FILE),          
+            (7, NOT_H_FILE),        
+            (-7, NOT_A_FILE),       
+            (-9, NOT_H_FILE)        
         ]
 
         for shift, mask in directions:
@@ -148,11 +146,9 @@ class ReversiEnv(gym.Env):
         action = int(action)
         info = self._get_info()
         
-        # 1. Illegal Move Penalty
         if info["action_mask"][action] == 0:
             return self._get_obs(), -1.0, True, False, {"error": "Illegal move"}
 
-        # 2. Execute Move
         if action == 64:
             self.pass_count += 1
         else:
@@ -161,30 +157,26 @@ class ReversiEnv(gym.Env):
                 action, self.current_player_bb, self.opp_bb
             )
 
-        # 3. Swap Turns
         self.current_player_bb, self.opp_bb = self.opp_bb, self.current_player_bb
         self.is_black_turn = not self.is_black_turn
 
-        # 4. Check Termination & Reward
         terminated = False
         reward = 0.0
 
         if self.pass_count >= 2 or (self.current_player_bb | self.opp_bb) == 0xFFFFFFFFFFFFFFFF:
             terminated = True
-            
-            # Use bit_count() (Available in Python 3.10+)
+
             next_player_score = self.current_player_bb.bit_count()
             just_moved_score = self.opp_bb.bit_count()
 
             if just_moved_score > next_player_score:
-                reward = 1.0  # The action taken resulted in a win
+                reward = 1.0  
             elif just_moved_score < next_player_score:
-                reward = -1.0 # The action taken resulted in a loss
+                reward = -1.0
 
         return self._get_obs(), reward, terminated, False, self._get_info()
 
     def render(self):
-        """Prints the board to the terminal."""
         board = np.full(64, '.')
         for i in range(64):
             if self.current_player_bb & (1 << i):
@@ -199,9 +191,7 @@ class ReversiEnv(gym.Env):
         print()
         
     def get_state(self):
-        """Ultra-fast snapshot of the current board."""
         return (self.current_player_bb, self.opp_bb, self.is_black_turn, self.pass_count)
 
     def set_state(self, state):
-        """Restores the board instantly."""
         self.current_player_bb, self.opp_bb, self.is_black_turn, self.pass_count = state

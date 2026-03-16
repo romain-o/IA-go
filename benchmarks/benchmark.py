@@ -1,14 +1,9 @@
 import numpy as np
 import random
 import torch
-import time
 from env import ReversiEnv
 from train import DualHeadResNet
 from mcts import MCTS
-
-# =====================================================================
-# --- 1. THE CLASSIC ALGORITHMS (GYM API COMPLIANT) ---
-# =====================================================================
 
 class RandomAgent:
     def get_action(self, env, action_mask):
@@ -34,13 +29,12 @@ class GreedyAgent:
             score_after = env_copy.opp_bb.bit_count() 
             
             flips = score_after - score_before
-            
-            # THE STOCHASTIC TIE-BREAKER
+
             if flips > max_flips:
                 max_flips = flips
-                best_moves = [move]       # New absolute best, reset the list
+                best_moves = [move]      
             elif flips == max_flips:
-                best_moves.append(move)   # Equally good, add to the pool
+                best_moves.append(move) 
                 
         return random.choice(best_moves)
 
@@ -121,7 +115,6 @@ class MinimaxAgent:
             still_maximizing = (child_env.is_black_turn == root_player_is_black)
             eval_score = self.minimax(child_env, self.depth - 1, -float('inf'), float('inf'), still_maximizing, root_player_is_black, child_info["action_mask"], child_term)
             
-            # THE STOCHASTIC TIE-BREAKER
             if eval_score > max_eval:
                 max_eval = eval_score
                 best_moves = [move]
@@ -130,9 +123,6 @@ class MinimaxAgent:
                 
         return random.choice(best_moves)
 
-# =====================================================================
-# --- 2. ALPHAZERO SYNC EVALUATOR ---
-# =====================================================================
 class SyncEvaluator:
     """Evaluates the board immediately on the GPU without multiprocessing overhead."""
     def __init__(self, model, device):
@@ -145,25 +135,19 @@ class SyncEvaluator:
             p, v = self.model(t)
             return {a: prob for a, prob in enumerate(p.squeeze(0).cpu().numpy())}, v.item()
 
-# =====================================================================
-# --- 3. THE MATCHUP ARENA ---
-# =====================================================================
+
 if __name__ == "__main__":
-    # --- CONFIGURATION ---
     GAMES_TO_PLAY = 20
-    CHECKPOINT = r"checkpoints/reversi_bundle_game_65000.pth" # Update this to your latest
-    
-    # CHOOSE YOUR OPPONENT HERE: RandomAgent(), GreedyAgent(), or MinimaxAgent(depth=4)
+    CHECKPOINT = r"model.pth"
+
     baseline_bot = MinimaxAgent(depth=4)
     baseline_name = baseline_bot.__class__.__name__
-    # ---------------------
 
     print(f"\nLoading Neural Network: {CHECKPOINT}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = DualHeadResNet().to(device)
     bundle = torch.load(CHECKPOINT, map_location=device, weights_only=False)
-    
-    # Smart Loader to handle both legacy and bundle checkpoints
+
     if 'model_state_dict' in bundle:
         model.load_state_dict(bundle['model_state_dict'])
     else:
@@ -181,24 +165,20 @@ if __name__ == "__main__":
         obs, info = env.reset()
         terminated = False
         mcts = MCTS(num_simulations=200) 
-        
-        # AlphaZero is Black for even games, White for odd games
+
         az_is_black = (game % 2 == 0)
         
         while not terminated:
             action_mask = info["action_mask"]
             
             if env.is_black_turn == az_is_black:
-                # AlphaZero's Turn
                 _, policy = mcts.search(env, evaluator, add_noise=False)
                 action = int(np.argmax(policy))
             else:
-                # Baseline Bot's Turn
                 action = baseline_bot.get_action(env, action_mask)
                 
             obs, _, terminated, _, info = env.step(action)
             
-        # Calculate Winner
         b_score = env.current_player_bb.bit_count() if env.is_black_turn else env.opp_bb.bit_count()
         w_score = env.opp_bb.bit_count() if env.is_black_turn else env.current_player_bb.bit_count()
         
